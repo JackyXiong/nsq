@@ -15,7 +15,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/judwhite/go-svc/svc"
-	"github.com/mreiferson/go-options"
 	"github.com/nsqio/nsq/internal/app"
 	"github.com/nsqio/nsq/internal/version"
 	"github.com/nsqio/nsq/nsqd"
@@ -174,17 +173,20 @@ func (cfg config) Validate() {
 	}
 }
 
+// 包装nsqd的结构体
 type program struct {
 	nsqd *nsqd.NSQD
 }
 
 func main() {
 	prg := &program{}
+	// 通过svc启动nsqd
 	if err := svc.Run(prg, syscall.SIGINT, syscall.SIGTERM); err != nil {
 		log.Fatal(err)
 	}
 }
 
+// svc Service 接口方法，如果程序是windows 服务，svc.Run 会调用该方法，
 func (p *program) Init(env svc.Environment) error {
 	if env.IsWindowsService() {
 		dir := filepath.Dir(os.Args[0])
@@ -193,31 +195,33 @@ func (p *program) Init(env svc.Environment) error {
 	return nil
 }
 
+// svc Service 接口方法，svc.Run 会调用该方法
 func (p *program) Start() error {
-	opts := nsqd.NewOptions()
+	opts := nsqd.NewOptions() // 创建nsqd参数选项
 
-	flagSet := nsqdFlagSet(opts)
-	flagSet.Parse(os.Args[1:])
+	flagSet := nsqdFlagSet(opts) // 创建nsqd的命令行参数组
+	flagSet.Parse(os.Args[1:])   // 解析参数，nsqd -version
 
 	rand.Seed(time.Now().UTC().UnixNano())
 
+	//有version，则打印version后退出
 	if flagSet.Lookup("version").Value.(flag.Getter).Get().(bool) {
 		fmt.Println(version.String("nsqd"))
 		os.Exit(0)
 	}
 
 	var cfg config
-	configFile := flagSet.Lookup("config").Value.String()
+	configFile := flagSet.Lookup("config").Value.String() // 解析canfig参数，生成配置文件
 	if configFile != "" {
 		_, err := toml.DecodeFile(configFile, &cfg)
 		if err != nil {
 			log.Fatalf("ERROR: failed to load config file %s - %s", configFile, err.Error())
 		}
 	}
-	cfg.Validate()
+	cfg.Validate() // 配置文件校验
 
-	options.Resolve(opts, flagSet, cfg)
-	nsqd := nsqd.New(opts)
+	options.Resolve(opts, flagSet, cfg) // go-options 提供的函数，配置文件处理
+	nsqd := nsqd.New(opts)              // 创建nsqd
 
 	err := nsqd.LoadMetadata()
 	if err != nil {
@@ -227,12 +231,13 @@ func (p *program) Start() error {
 	if err != nil {
 		log.Fatalf("ERROR: failed to persist metadata - %s", err.Error())
 	}
-	nsqd.Main()
+	nsqd.Main() // 启动主进程
 
 	p.nsqd = nsqd
 	return nil
 }
 
+// svc Service 接口方法，svc.Run 会调用该方法
 func (p *program) Stop() error {
 	if p.nsqd != nil {
 		p.nsqd.Exit()

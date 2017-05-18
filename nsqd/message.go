@@ -90,6 +90,7 @@ func decodeMessage(b []byte) (*Message, error) {
 	return &msg, nil
 }
 
+// 将消息写入后端存储
 func writeMessageToBackend(buf *bytes.Buffer, msg *Message, bq BackendQueue) error {
 	buf.Reset()
 	_, err := msg.WriteTo(buf)

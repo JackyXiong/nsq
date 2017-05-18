@@ -71,8 +71,8 @@ type NSQD struct {
 }
 
 func New(opts *Options) *NSQD {
-	dataPath := opts.DataPath
-	if opts.DataPath == "" {
+	dataPath := opts.DataPath // 启动参数data-path
+	if opts.DataPath == "" {  // 无data-path 则使用工作目录
 		cwd, _ := os.Getwd()
 		dataPath = cwd
 	}
@@ -89,10 +89,10 @@ func New(opts *Options) *NSQD {
 		ci:                   clusterinfo.New(opts.Logger, http_api.NewClient(nil, opts.HTTPClientConnectTimeout, opts.HTTPClientRequestTimeout)),
 		dl:                   dirlock.New(dataPath),
 	}
-	n.swapOpts(opts)
+	n.swapOpts(opts) // 为n设置opts
 	n.errValue.Store(errStore{})
 
-	err := n.dl.Lock()
+	err := n.dl.Lock() // 获取目录锁
 	if err != nil {
 		n.logf("FATAL: --data-path=%s in use (possibly by another instance of nsqd)", dataPath)
 		os.Exit(1)
@@ -148,10 +148,12 @@ func (n *NSQD) logf(f string, args ...interface{}) {
 	n.getOpts().Logger.Output(2, fmt.Sprintf(f, args...))
 }
 
+// 获取 opts
 func (n *NSQD) getOpts() *Options {
 	return n.opts.Load().(*Options)
 }
 
+// 为nsqd设置opts
 func (n *NSQD) swapOpts(opts *Options) {
 	n.opts.Store(opts)
 }
@@ -210,14 +212,15 @@ func (n *NSQD) Main() {
 	var httpListener net.Listener
 	var httpsListener net.Listener
 
-	ctx := &context{n}
+	ctx := &context{n} // 包装 nsqd 的结构体
 
+	// 监听tcp
 	tcpListener, err := net.Listen("tcp", n.getOpts().TCPAddress)
 	if err != nil {
 		n.logf("FATAL: listen (%s) failed - %s", n.getOpts().TCPAddress, err)
 		os.Exit(1)
 	}
-	n.Lock()
+	n.Lock() // 实际上调用的是n.dl.Lock()
 	n.tcpListener = tcpListener
 	n.Unlock()
 	tcpServer := &tcpServer{ctx: ctx}
@@ -225,6 +228,7 @@ func (n *NSQD) Main() {
 		protocol.TCPServer(n.tcpListener, tcpServer, n.getOpts().Logger)
 	})
 
+	// 设置 https或者http 监听
 	if n.tlsConfig != nil && n.getOpts().HTTPSAddress != "" {
 		httpsListener, err = tls.Listen("tcp", n.getOpts().HTTPSAddress, n.tlsConfig)
 		if err != nil {
@@ -482,16 +486,16 @@ func (n *NSQD) Exit() {
 // to return a pointer to a Topic object (potentially new)
 func (n *NSQD) GetTopic(topicName string) *Topic {
 	// most likely, we already have this topic, so try read lock first.
-	n.RLock()
-	t, ok := n.topicMap[topicName]
+	n.RLock()                      //  获取读锁
+	t, ok := n.topicMap[topicName] // 尝试获取topic
 	n.RUnlock()
 	if ok {
 		return t
 	}
 
-	n.Lock()
+	n.Lock() // 没有获取到，需要新建topic，获取写锁
 
-	t, ok = n.topicMap[topicName]
+	t, ok = n.topicMap[topicName] // TODO why get topic again
 	if ok {
 		n.Unlock()
 		return t
@@ -509,6 +513,7 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 	t.Lock()
 	n.Unlock()
 
+	// 创建Channels
 	// if using lookupd, make a blocking call to get the topics, and immediately create them.
 	// this makes sure that any message received is buffered to the right channels
 	lookupdHTTPAddrs := n.lookupdHTTPAddrs()

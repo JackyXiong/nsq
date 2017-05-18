@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nsqio/go-diskqueue"
 	"github.com/nsqio/nsq/internal/quantile"
 	"github.com/nsqio/nsq/internal/util"
 )
@@ -21,8 +20,8 @@ type Topic struct {
 
 	name              string
 	channelMap        map[string]*Channel
-	backend           BackendQueue
-	memoryMsgChan     chan *Message
+	backend           BackendQueue  // 消息的第二存储系统。消息被实时存储在内存，该参数可配置消息额外的存储
+	memoryMsgChan     chan *Message // 消息的内存存储channel
 	exitChan          chan int
 	channelUpdateChan chan int
 	waitGroup         util.WaitGroupWrapper
@@ -34,9 +33,9 @@ type Topic struct {
 	deleter        sync.Once
 
 	paused    int32
-	pauseChan chan bool
+	pauseChan chan bool // why use channel
 
-	ctx *context
+	ctx *context // nsqd 实例的包装
 }
 
 // Topic constructor
@@ -57,6 +56,7 @@ func NewTopic(topicName string, ctx *context, deleteCallback func(*Topic)) *Topi
 		t.ephemeral = true
 		t.backend = newDummyBackendQueue()
 	} else {
+		// 存储后端设置为磁盘存储, diskqueue是实现了BackendQueue接口的结构体
 		t.backend = diskqueue.New(topicName,
 			ctx.nsqd.getOpts().DataPath,
 			ctx.nsqd.getOpts().MaxBytesPerFile,
@@ -187,6 +187,7 @@ func (t *Topic) PutMessages(msgs []*Message) error {
 	return nil
 }
 
+// 往topic写数据
 func (t *Topic) put(m *Message) error {
 	select {
 	case t.memoryMsgChan <- m:
@@ -305,6 +306,7 @@ func (t *Topic) Close() error {
 	return t.exit(false)
 }
 
+// 使topic退出，同时退出channel.若deleted为true，则删除.
 func (t *Topic) exit(deleted bool) error {
 	if !atomic.CompareAndSwapInt32(&t.exitFlag, 0, 1) {
 		return errors.New("exiting")
@@ -352,19 +354,21 @@ func (t *Topic) exit(deleted bool) error {
 	return t.backend.Close()
 }
 
+// 清空topic在内存的存储
 func (t *Topic) Empty() error {
 	for {
 		select {
-		case <-t.memoryMsgChan:
+		case <-t.memoryMsgChan: // 在memoryMsgChan为空之前，会一直进入该分支
 		default:
 			goto finish
 		}
 	}
 
 finish:
-	return t.backend.Empty()
+	return t.backend.Empty() // 清空后端存储
 }
 
+// 将内存中的消息持久化到磁盘
 func (t *Topic) flush() error {
 	var msgBuf bytes.Buffer
 
@@ -421,6 +425,7 @@ func (t *Topic) UnPause() error {
 	return t.doPause(false)
 }
 
+// 暂停使用topic
 func (t *Topic) doPause(pause bool) error {
 	if pause {
 		atomic.StoreInt32(&t.paused, 1)
